@@ -101,6 +101,7 @@ public class WordCount {
     // 对数据集进行处理，按空格分词展开，转换成(word, 1)二元组进行统计
     // 按照第一个位置的word分组
     // 按照第二个位置上的数据求和
+    ### flatMap 是将一行转换成多行操作，需要参数是FlatMapFunction的子类
     DataSet<Tuple2<String, Integer>> resultSet = inputDataSet.flatMap(new MyFlatMapper())
       .groupBy(0)
       .sum(1);
