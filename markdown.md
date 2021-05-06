@@ -25,7 +25,7 @@
   ```java
    import org.apache.flink.api.common.functions.FlatMapFunction;
   ```
-  + 引用套用引用
+  + 引用套用引用--注意 shell可以有回车样式
   ```java
    import org.apache.flink.api.common.functions.FlatMapFunction;
    ```shell
