@@ -1,6 +1,7 @@
 # 尚硅谷Flink入门到实战-学习笔记
 
 > [尚硅谷2021最新Java版Flink](https://www.bilibili.com/video/BV1qy4y1q728)
+> https://github.com/QuakeWang/FlinkTutorial 源码
 >
 > 下面笔记来源（尚硅谷公开资料、网络博客、个人小结）
 >
@@ -223,8 +224,8 @@ public class StreamWordCount {
 5> (hello,4)
 ```
 
-这里`env.execute();`之前的代码，可以理解为是在定义任务，只有执行`env.execute()`后，Flink才把前面的代码片段当作一个任务整体（每个线程根据这个任务操作，并行处理流数据）。  
-流处理和批处理最大的区别就是，批处理会只计算一次汇总的结果，而流处理是每一次都执行一次，因此可以在输出中可以看到hello如果出现4次，则会打印4次结果。即会有中间结果的快照打印过程。
+1.这里`env.execute();`之前的代码，可以理解为是在定义任务，只有执行`env.execute()`后，Flink才把前面的代码片段当作一个任务整体（每个线程根据这个任务操作，并行处理流数据）。  
+2.流处理和批处理最大的区别就是，批处理会只计算一次汇总的结果，而流处理是每一次都执行一次，因此可以在输出中可以看到hello如果出现4次，则会打印4次结果。即会有中间结果的快照打印过程。
 
 ## 2.3 流式数据源测试
 
@@ -258,6 +259,13 @@ public class StreamWordCount {
            // 设置并行度，默认值 = 当前计算机的CPU逻辑核数（设置成1即单线程处理）
            // env.setMaxParallelism(32);
    
+        // 使用parameter tool工具从程序启动参数中提取配置项
+        //参数设置的时候使用 --host local --port 7777 
+        //注意:是-- 而不是-
+        ParameterTool parameterTool = ParameterTool.fromArgs(args);
+        String host = parameterTool.get("host");
+        int port = parameterTool.getInt("port");
+        
            // 从文件中读取数据
    //        String inputPath = "/tmp/Flink_Tutorial/src/main/resources/hello.txt";
    //        DataStream<String> inputDataStream = env.readTextFile(inputPath);
