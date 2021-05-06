@@ -25,3 +25,12 @@
   ```java
    import org.apache.flink.api.common.functions.FlatMapFunction;
   ```
+  + 引用套用引用
+  ```java
+   import org.apache.flink.api.common.functions.FlatMapFunction;
+   ```
+   输出:
+   a b 
+   c d
+   ```
+  ```
