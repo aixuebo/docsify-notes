@@ -30,7 +30,7 @@
    import org.apache.flink.api.common.functions.FlatMapFunction;
    ```
    输出:
-   a b 
-   c d
+   > a b 
+   > c d
    ```
   ```
