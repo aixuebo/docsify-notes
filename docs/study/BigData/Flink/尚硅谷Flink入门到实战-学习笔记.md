@@ -1,7 +1,7 @@
 # 尚硅谷Flink入门到实战-学习笔记
 
 > [尚硅谷2021最新Java版Flink](https://www.bilibili.com/video/BV1qy4y1q728)
-> https://github.com/QuakeWang/FlinkTutorial 源码
+> https://github.com/QuakeWang/FlinkTutorial 源码  https://github.com/aixuebo/FlinkTutorial
 >
 > 下面笔记来源（尚硅谷公开资料、网络博客、个人小结）
 >
@@ -774,7 +774,9 @@ eg：这里我配置文件设置`taskmanager.numberOfTaskSlots: 4`，实际Job�
 
 ​	返回集群执行环境，将Jar提交到远程服务器。需要在调用时指定JobManager的IP和端口号，并指定要在集群中运行的Jar包。
 
-`StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironment(1);`
+`StreamExecutionEnvironment env = StreamExecutionEnvironment.createRemoteEnvironment("IP", port,"yarn://xx.jar");`
+
+因此我们会发现如果这么写，测试的时候写createLocalEnvironment、上线的时候改成createRemoteEnvironment，代码会有改动，很麻烦,因此flink帮我们做了一层封装。使用getExecutionEnvironment即可自己识别是线上还是测试环境。
 
 ## 5.2 Source
 
@@ -807,7 +809,7 @@ public class SourceTest1_Collection {
         env.setParallelism(1);
 
         // Source: 从集合Collection中获取数据
-        DataStream<SensorReading> dataStream = env.fromCollection(
+        DataStream<SensorReading> dataStream = env.fromCollection( //定义一个list,每一个元素是一个java对象
                 Arrays.asList(
                         new SensorReading("sensor_1", 1547718199L, 35.8),
                         new SensorReading("sensor_6", 1547718201L, 15.4),
@@ -816,14 +818,14 @@ public class SourceTest1_Collection {
                 )
         );
 
-        DataStream<Integer> intStream = env.fromElements(1,2,3,4,5,6,7,8,9);
+        DataStream<Integer> intStream = env.fromElements(1,2,3,4,5,6,7,8,9);//定义一个元素集合作为数据源
 
         // 打印输出
-        dataStream.print("SENSOR");
+        dataStream.print("SENSOR");//参数是标识流的名称
         intStream.print("INT");
 
         // 执行
-        env.execute("JobName");
+        env.execute("JobName"); //参数是jobName
 
     }
 
@@ -1007,6 +1009,7 @@ sensor_1,1547718212,37.1
            properties.setProperty("auto.offset.reset", "latest");
    
            // flink添加外部数据源
+           // addSource添加一个数据源，添加topic主题、如何处理数据、kafka的配置信息
            DataStream<String> dataStream = env.addSource(new FlinkKafkaConsumer<String>("sensor", new SimpleStringSchema(),properties));
    
            // 打印输出
