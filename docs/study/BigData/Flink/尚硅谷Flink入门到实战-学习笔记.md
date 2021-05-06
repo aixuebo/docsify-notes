@@ -1241,14 +1241,15 @@ filter> sensor_1,1547718212,37.1
 
 + DataStream里没有reduce和sum这类聚合操作的方法，因为**Flink设计中，所有数据必须先分组才能做聚合操作**。
 + **先keyBy得到KeyedStream，然后调用其reduce、sum等聚合操作方法。（先分组后聚合）**
++ 聚合操作，必须针对分组后的对象才能进行操作。DataStream本身不支持sum等聚合操作。  
+  即先keyBy得到KeyedStream，然后调用其reduce、sum等聚合操作方法。
 
 ---
 
 常见的聚合操作算子主要有：
 
-+ keyBy
++ keyBy : keyBy不属于数据计算，而应该属于数据传输类的,他将数据按照key拆分成不想交的分区内。按照key的hashcode取模进行分区，确保相同的key分配到同一个分区里。
 + 滚动聚合算子Rolling Aggregation
-
 + reduce
 
 ---
@@ -1308,17 +1309,27 @@ public class TransformTest2_RollingAggregation {
 //            }
 //        });
 
+        //注意:keyBy(data -> data.getId())这种方式是key选择器,即确定key是id,因此知道key的类型是String
+        //    keyBy("id") 返回的是tuple做为key,原因是keyBy参数是字段数组,所以需要按照顺序返回多个字段的结果作为key,因此是tuple
+        //KeyedStream<SensorReading, String> keyedStream1 = dataStream.keyBy(data -> data.getId());// 使用 lambda 表达式对传感器按照 id 进行分组
+        //KeyedStream<SensorReading, Tuple> keyedStream = dataStream.keyBy("id");
+
         DataStream<SensorReading> sensorStream = dataStream.map(line -> {
             String[] fields = line.split(",");
             return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
         });
         // 先分组再聚合
         // 分组
+        //SensorReading::getId 相当于传入了方法体，函数引用
         KeyedStream<SensorReading, String> keyedStream = sensorStream.keyBy(SensorReading::getId);
+        
+        //max返回的值依然是SensorReading,只是他的返回值中只有temperature字段被更新了，其他字段比如时间戳是不会被更新的
+        //DataStream<SensorReading> resultStream = keyedStream.max("temperature");
 
-        // 滚动聚合，max和maxBy区别在于，maxBy除了用于max比较的字段以外，其他字段也会更新成最新的，而max只有比较的字段更新，其他字段不变
+        // 滚动聚合---所谓滚动聚合是数每一个数据来了，都会在运算，都会被输出，即，比如10条数据，则输出也是10条数据，不会相同的key只输出一次。但虽然是10次计算，但每一次计算的结果都是计算max值，说明是准确的。
+        //maxBy除了用于max比较的字段以外，其他字段也会更新成最新的，而max只有比较的字段更新，其他字段不变
         DataStream<SensorReading> resultStream = keyedStream.maxBy("temperature");
-
+        
         resultStream.print("result");
 
         env.execute();
@@ -1354,8 +1365,8 @@ result> SensorReading{id='sensor_1', timestamp=1547718212, temperature=37.1}
 
 #### reduce
 
-​	**Reduce适用于更加一般化的聚合操作场景**。java中需要实现`ReduceFunction`函数式接口。
-
+​	**Reduce适用于更加一般化的聚合操作场景**。java中需要实现`ReduceFunction`函数式接口。  
+max、maxBy等操作,只能有一个参数传入进行比较，如果我要比较多个参数，比如时间戳+温度，那显然是无法执行的。需要用到reduce
 ---
 
 ​	在前面Rolling Aggregation的前提下，对需求进行修改。获取同组历史温度最高的传感器信息，同时要求实时更新其时间戳信息。
@@ -1395,6 +1406,7 @@ public class TransformTest3_Reduce {
         KeyedStream<SensorReading, String> keyedStream = sensorStream.keyBy(SensorReading::getId);
 
         // reduce，自定义规约函数，获取max温度的传感器信息以外，时间戳要求更新成最新的
+        //reduce参数(合并的数据,最新数据)
         DataStream<SensorReading> resultStream = keyedStream.reduce(
                 (curSensor,newSensor)->new SensorReading(curSensor.getId(),newSensor.getTimestamp(), Math.max(curSensor.getTemperature(), newSensor.getTemperature()))
         );
@@ -1439,11 +1451,19 @@ result> SensorReading{id='sensor_1', timestamp=1547718212, temperature=37.1}
 多流转换算子一般包括：
 
 + Split和Select （新版已经移除）
-+ Connect和CoMap
-
++ Connect和CoMap 
 + Union
 
 #### Split和Select
+split+select配合使用。
+split --> OutputSelector<I,I> --> 返回值SplitStream<I>
+select --> select("tag") --> 返回值DataStream<I>
+  
+DataStream -> SplitStream,根据某些特征把DataStream拆分成SplitStream;
+SplitStream虽然看起来像是两个Stream，但是其实它是一个特殊的Stream.
+即相当于为流中每一个元素打一个tag标记,标记他是split1还是split2等等。
+
+比如切分成高温流、低温流。
 
 **注：新版Flink已经不存在Split和Select这两个API了（至少Flink1.12.1没有！）**
 
@@ -1514,14 +1534,17 @@ public class TransformTest4_MultipleStreams {
 
     // 1. 分流，按照温度值30度为界分为两条流
     SplitStream<SensorReading> splitStream = dataStream.split(new OutputSelector<SensorReading>() {
+      //注意:一条数据可以属于多个标签,因此返回值是一个标签字符串的迭代器。
       @Override
       public Iterable<String> select(SensorReading value) {
         return (value.getTemperature() > 30) ? Collections.singletonList("high") : Collections.singletonList("low");
       }
     });
 
+    //通过tag拆分成具体的子流
     DataStream<SensorReading> highTempStream = splitStream.select("high");
     DataStream<SensorReading> lowTempStream = splitStream.select("low");
+    //选择多个标签组成的子流
     DataStream<SensorReading> allTempStream = splitStream.select("high", "low");
 
     highTempStream.print("high");
@@ -1547,8 +1570,10 @@ all > SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200902202832986.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
 **DataStream,DataStream -> ConnectedStreams**: 连接两个保持他们类型的数据流，两个数据流被Connect 之后，只是被放在了一个流中，内部依然保持各自的数据和形式不发生任何变化，两个流相互独立。
+将2条流组合成一条流,但流本身是无法操作的，因为他由2个不同的数据结构组成的流组成。因此看返回值是两个输入
 
 ##### CoMap
+针对两条不同的流的输入格式,进行分别处理。
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200902203333640.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
 **ConnectedStreams -> DataStream**: 作用于ConnectedStreams 上，功能与map和flatMap一样，对ConnectedStreams 中的**每一个Stream分别进行map和flatMap操作**；
@@ -1626,8 +1651,12 @@ public class TransformTest4_MultipleStreams {
             }
         });
 
+        //将2条流组合成一条流,但流本身是无法操作的，因为他由2个不同的数据结构组成的流组成。因此看返回值是两个输入
         ConnectedStreams<Tuple2<String, Double>, SensorReading> connectedStreams = warningStream.connect(lowTempStream);
 
+        //分别处理2条不同的流的数据结构
+        //持有第一个流的输入、第二个流的输入、返回总体输出Object。
+        //他会根据不同的流，走不同的方法。比如第一个流他会走map1方法，第二个流他会走map2方法
         DataStream<Object> resultStream = connectedStreams.map(new CoMapFunction<Tuple2<String, Double>, SensorReading, Object>() {
             @Override
             public Object map1(Tuple2<String, Double> value) throws Exception {
@@ -1723,6 +1752,8 @@ val numbers: DataStream[(String,Integer)] = env.fromElements(
   Person("张三",12),
   Person("李四"，23)
 )
+
+感觉好像有点问题，应该返回值是Person而不是元组(String,Integer)
 ```
 
 ### 5.4.4 Java简单对象(POJO)
@@ -1735,13 +1766,14 @@ java的POJO这里要求必须提供无参构造函数
 public class Person{
   public String name;
   public int age;
+  
   public Person() {}
   public Person( String name , int age) {
     this.name = name;
     this.age = age;
   }
 }
-DataStream Pe rson > persons = env.fromElements(
+DataStream<Person> persons = env.fromElements(
   new Person (" Alex", 42),
   new Person (" Wendy",23)
 );
@@ -1761,10 +1793,10 @@ Flink对Java和Scala中的一些特殊目的的类型也都是支持的，比如
 
 ```java
 DataStream<String> flinkTweets = tweets.filter(new FlinkFilter()); 
-public static class FlinkFilter implements FilterFunction<String> { 
-  @Override public boolean filter(String value) throws Exception { 
-    return value.contains("flink");
-  }
+   public static class FlinkFilter implements FilterFunction<String> { 
+    @Override public boolean filter(String value) throws Exception { 
+      return value.contains("flink");
+   }
 }
 ```
 
@@ -1773,9 +1805,10 @@ public static class FlinkFilter implements FilterFunction<String> {
 ```java
 DataStream<String> flinkTweets = tweets.filter(
   new FilterFunction<String>() { 
-    @Override public boolean filter(String value) throws Exception { 
-      return value.contains("flink"); 
-    }
+      @Override 
+      public boolean filter(String value) throws Exception { 
+        return value.contains("flink"); 
+      }
   }
 );
 ```
@@ -1783,8 +1816,11 @@ DataStream<String> flinkTweets = tweets.filter(
 ​	我们filter的字符串"flink"还可以当作参数传进去。
 
 ```java
+
 DataStream<String> tweets = env.readTextFile("INPUT_FILE "); 
+
 DataStream<String> flinkTweets = tweets.filter(new KeyWordFilter("flink")); 
+
 public static class KeyWordFilter implements FilterFunction<String> { 
   private String keyWord; 
 
@@ -1897,7 +1933,7 @@ public class TransformTest5_RichFunction {
         public Tuple2<String, Integer> map(SensorReading value) throws Exception {
 //            RichFunction可以获取State状态
 //            getRuntimeContext().getState();
-            return new Tuple2<>(value.getId(), getRuntimeContext().getIndexOfThisSubtask());
+            return new Tuple2<>(value.getId(), getRuntimeContext().getIndexOfThisSubtask());//在第几个子任务中处理的该元素
         }
 
         @Override
