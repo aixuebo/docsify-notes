@@ -28,9 +28,9 @@
   + 引用套用引用
   ```java
    import org.apache.flink.api.common.functions.FlatMapFunction;
-   ```
+   ```shell
    输出:
-   > a b 
-   > c d
+   1> a b 
+   2> c d
    ```
   ```
