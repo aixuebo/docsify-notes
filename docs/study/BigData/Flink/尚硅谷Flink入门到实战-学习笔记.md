@@ -101,11 +101,13 @@ public class WordCount {
     // 对数据集进行处理，按空格分词展开，转换成(word, 1)二元组进行统计
     // 按照第一个位置的word分组
     // 按照第二个位置上的数据求和
-    ### flatMap 是将一行转换成多行操作，需要参数是FlatMapFunction的子类
+    
+    // flatMap 是将一行转换成多行操作，需要参数是FlatMapFunction的子类
     DataSet<Tuple2<String, Integer>> resultSet = inputDataSet.flatMap(new MyFlatMapper())
+    //按照哪个字段进行分组，spark中是groupByKey，因为持有的是tuple,但flink没有这个方法，
+    //需要自己制定key的选择器。或者传入位置—从0开始计算。或者传入字段名称
       .groupBy(0)
-      .sum(1);
-
+      .sum(1);//sum中的参数1,表示第1个位置进行求和
     resultSet.print();
   }
 
@@ -175,8 +177,9 @@ public class StreamWordCount {
         // 创建流处理执行环境
         StreamExecutionEnvironment env = StreamContextEnvironment.getExecutionEnvironment();
 
-      	// 设置并行度，默认值 = 当前计算机的CPU逻辑核数（设置成1即单线程处理）
-        // env.setMaxParallelism(32);
+      	// 设置并行度，默认值 = 当前计算机的CPU逻辑核数（设置成1即单线程处理） --- local模式才是使用CPU,分布式环境就是指代节点。
+        // env.setMaxParallelism(32); //默认是4个分布式分区节点
+        // env.setParallelism(8) //设置并行度
       
         // 从文件中读取数据
         String inputPath = "/tmp/Flink_Tutorial/src/main/resources/hello.txt";
@@ -184,13 +187,15 @@ public class StreamWordCount {
 
         // 基于数据流进行转换计算
         DataStream<Tuple2<String,Integer>> resultStream = inputDataStream.flatMap(new WordCount.MyFlatMapper())
-                .keyBy(item->item.f0)
+                //注意没有groupBy,只有keyBy,原因可以理解成groupBy的含义是数据到了才能分组,但流式计算数据还尚未全部到达,因此没有groupBy。
+                //keyBy是指定key,然后根据key的hashcode指定到某一个分区内再进一步计算。
+                .keyBy(item->item.f0)  //也可以直接写0.表示根据位置指定key
                 .sum(1);
 
         resultStream.print();
 
         // 执行任务
-        env.execute();
+        env.execute();//流数据必须要有该方法去真正执行操作。
     }
 }
 ```
@@ -218,7 +223,8 @@ public class StreamWordCount {
 5> (hello,4)
 ```
 
-​	这里`env.execute();`之前的代码，可以理解为是在定义任务，只有执行`env.execute()`后，Flink才把前面的代码片段当作一个任务整体（每个线程根据这个任务操作，并行处理流数据）。
+这里`env.execute();`之前的代码，可以理解为是在定义任务，只有执行`env.execute()`后，Flink才把前面的代码片段当作一个任务整体（每个线程根据这个任务操作，并行处理流数据）。
+流处理和批处理最大的区别就是，批处理会只计算一次汇总的结果，而流处理是每一次都执行一次，因此可以在输出中可以看到hello如果出现4次，则会打印4次结果。即会有中间结果的快照打印过程。
 
 ## 2.3 流式数据源测试
 
