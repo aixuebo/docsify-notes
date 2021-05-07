@@ -3058,17 +3058,25 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
 + `.trigger()` ——触发器
 
   定义window 什么时候关闭，触发计算并输出结果
+  如果迟到数据，到了关闭时间，还要关闭吗？还要输出吗?所以可以先输出结果,后期再重新计算,因此需要trigger操作。
 
 + `.evitor()` ——移除器
 
-  定义移除某些数据的逻辑
+  定义移除某些数据的逻辑:在触发计算之前,把数据过滤掉,不参与计算;或者参与计算后,再移除该数据,保证后期该数据不会进入下一个流程节点。
 
-+ `.allowedLateness()` ——允许处理迟到的数据
++ `.allowedLateness()` ——允许处理迟到的数据,.allowedLateness(Time.minutes(1)) 
+ 允许1分钟内的迟到数据。
+ 即假设9点到窗口结束点,窗口开始计算,然后9点01分之前,每一个数据来了,都一条一条单独计算,与窗口的结果值进行merge计算,会发现9点之后的数据更新很频繁。
 
 + `.sideOutputLateData()` ——将迟到的数据放入侧输出流
+  OutputTag<SensorReading> outputTag = new OutputTag<>("late") { };
+  .sideOutputLateData(outputTag)
+       
++ `.getSideOutput()` ——获取侧输出流  sumStream.getSideOutput(outputTag).print("late");  
+  注意该方法一定是进过sideOutputLateData处理,因此返回值SingleOutputStreamOperator<SensorReading>,属于datastream的子类
 
-+ `.getSideOutput()` ——获取侧输出流
-
+    ****之后可以再用别的程序，把侧输出流的信息和前面窗口的信息聚合。（可以把侧输出流理解为用来批处理来补救处理超时数据）
+    
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200526181340668.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
 ### 6.2.6 代码测试
@@ -3315,7 +3323,8 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
 
    滑动窗口，当窗口不足设置的大小时，会先按照步长输出。
 
-   eg：窗口大小10，步长2，那么前5次输出时，窗口内的元素个数分别是（2，4，6，8，10），再往后就是10个为一个窗口了。
+   eg：窗口大小10，步长2，那么前5次输出时，窗口内的元素个数分别是（2，4，6，8，10），再往后就是10个为一个窗口了。 
+   输出是以步长为准的,即每隔2个数，就会输出一次，如果不足10个,也要输出
 
    + 编写java代码：
 
@@ -3353,7 +3362,7 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
          });
      
          DataStream<Double> resultStream = dataStream.keyBy(SensorReading::getId)
-           .countWindow(10, 2)
+           .countWindow(10, 2) //10个数一个窗口,每2个数滚动一次窗口。
            .aggregate(new MyAvgFunc());
      
          resultStream.print("result");
@@ -3361,11 +3370,12 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
          env.execute();
        }
      
-       public static class MyAvgFunc implements AggregateFunction<SensorReading, Tuple2<Double, Integer>, Double> {
+       public static class MyAvgFunc implements AggregateFunction<SensorReading, Tuple2<Double, Integer>, Double> { //Tuple是存储中间结果
      
+         //存储中间结果
          @Override
          public Tuple2<Double, Integer> createAccumulator() {
-           return new Tuple2<>(0.0, 0);
+           return new Tuple2<>(0.0, 0);//温度和、数据条数 --- 用于计算均值
          }
      
          @Override
@@ -3472,7 +3482,7 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
 
 + **Event Time：事件创建时间；**
 
-+ Ingestion Time：数据进入Flink的时间；
++ Ingestion Time：数据进入Flink的时间；（摄入时间）
 
 + Processing Time：执行操作算子的本地系统时间，与机器相关；
 
@@ -3512,6 +3522,8 @@ StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironm
 // 从调用时刻开始给env创建的每一个stream追加时间特征
 env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 ```
+
+代码 : https://github.com/aixuebo/FlinkTutorial/blob/main/src/main/java/com/erxi/apitest/window/WindowTest3_EventTimeWindow.java
 
 **注：具体的时间，还需要从数据中提取时间戳。**
 
