@@ -1978,6 +1978,14 @@ close
 
 重分区操作，在DataStream类中可以看到很多`Partitioner`字眼的类。
 
+keyBy 根据key的hashcode去打散,重分区。
+shuffle 重新分区打散
+rebalance 采用轮训的方式,比如下游有4个节点，则上游每一个分区的结果,都会依次向1-4个节点发送信息。
+rescale 与rebalance相似,但不是上游每一个节点都向下游所有节点轮训发送数据。
+        而是假设上游2个节点，下游4个节点，上游第一个节点会轮训的发送到下游1-2节点。上游第2个节点，会轮训发送到下游3-4节点。
+global 所有上游数据都会发送到下游第一个节点，即数据会汇总，这个很少用,因为有性能问题
+partitionCustom 用户自己定义重分区方式。
+
 **其中`partitionCustom(...)`方法用于自定义重分区**。
 
 java代码：
@@ -2168,7 +2176,7 @@ stream.addSink(new MySink(xxxx))
                return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2])).toString();
            });
    
-           // 将数据写入Kafka
+           // 将数据写入Kafka  ### 确保dataStream的数据源是String,所以用SimpleStringSchema,泛型也是String -- FlinkKafkaProducer<String>
            dataStream.addSink( new FlinkKafkaProducer<String>("localhost:9092", "sinktest", new SimpleStringSchema()));
            
            env.execute();
@@ -2216,7 +2224,7 @@ stream.addSink(new MySink(xxxx))
    SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
    ```
 
-这里Flink的作用相当于pipeline了。
+这里Flink的作用相当于pipeline了。从kafka读取数据,处理数据,输出到kafka,这不就是一个实时ETL的过程么。
 
 ### 5.7.2 Redis
 
@@ -2279,17 +2287,19 @@ stream.addSink(new MySink(xxxx))
                    .setDatabase(0)
                    .build();
    
+            //传入参数 如何初始化连接到redis、如何生成key和value
            dataStream.addSink(new RedisSink<>(config, new MyRedisMapper()));
    
            env.execute();
        }
    
        // 自定义RedisMapper
-       public static class MyRedisMapper implements RedisMapper<SensorReading> {
+       public static class MyRedisMapper implements RedisMapper<SensorReading> { //泛型是dataStream持有的元素类型
            // 定义保存数据到redis的命令，存成Hash表，hset sensor_temp id temperature
+           //到底发送到redis的哪个命令  比如hset
            @Override
            public RedisCommandDescription getCommandDescription() {
-               return new RedisCommandDescription(RedisCommand.HSET, "sensor_temp");
+               return new RedisCommandDescription(RedisCommand.HSET, "sensor_temp");//sensor_temp 表示redis的表名
            }
    
            @Override
@@ -2389,7 +2399,7 @@ stream.addSink(new MySink(xxxx))
        }
    
        // 实现自定义的ES写入操作
-       public static class MyEsSinkFunction implements ElasticsearchSinkFunction<SensorReading> {
+       public static class MyEsSinkFunction implements ElasticsearchSinkFunction<SensorReading> { //dataStream的元素类型是SensorReading
            @Override
            public void process(SensorReading element, RuntimeContext ctx, RequestIndexer indexer) {
                // 定义写入的数据source
@@ -2400,7 +2410,7 @@ stream.addSink(new MySink(xxxx))
    
                // 创建请求，作为向es发起的写入命令(ES7统一type就是_doc，不再允许指定type)
                IndexRequest indexRequest = Requests.indexRequest()
-                       .index("sensor")
+                       .index("sensor") //写入索引sensor
                        .source(dataSource);
    
                // 用index发送请求
