@@ -1,7 +1,7 @@
 # 尚硅谷Flink入门到实战-学习笔记
 
-> [尚硅谷2021最新Java版Flink](https://www.bilibili.com/video/BV1qy4y1q728)
-> https://github.com/QuakeWang/FlinkTutorial 源码  https://github.com/aixuebo/FlinkTutorial
+> [尚硅谷2021最新Java版Flink](https://www.bilibili.com/video/BV1qy4y1q728)  
+> https://github.com/QuakeWang/FlinkTutorial   源码  https://github.com/aixuebo/FlinkTutorial  
 >
 > 下面笔记来源（尚硅谷公开资料、网络博客、个人小结）
 >
@@ -2841,7 +2841,7 @@ orangeStream
 
 # 6. Flink的Window
 
-## 6.1 Window
+## 6.1 Window  -- 必须选按照key分组后,才需要统计相同key下的聚合数据,因此在keyBy生成KeyedStream后,才有window方法
 
 > [Flink_Window](https://blog.csdn.net/dongkang123456/article/details/108374799)
 
@@ -2854,6 +2854,9 @@ orangeStream
 ​	**Window是无限数据流处理的核心，Window将一个无限的stream拆分成有限大小的”buckets”桶，我们可以在这些桶上做计算操作**。
 
 *举例子：假设按照时间段划分桶，接收到的数据马上能判断放到哪个桶，且多个桶的数据能并行被处理。（迟到的数据也可判断是原本属于哪个桶的）*
+
+窗口:切割无限流,转换成有限流。基于桶的概念来实现的窗口。  
+桶:存储属于某一个窗口的数据。因此数据来了就知道他属于哪个桶，直接进桶即可，还属于流程序。  
 
 ### 6.1.2 Window类型
 
@@ -2887,9 +2890,9 @@ orangeStream
 
 + 滑动窗口由**固定的窗口长度**和**滑动间隔**组成
 
-+ 可以有重叠(是否重叠和滑动距离有关系)
-
-+ 滑动窗口是固定窗口的更广义的一种形式，滚动窗口可以看做是滑动窗口的一种特殊情况（即窗口大小和滑动间隔相等）
++ 可以有重叠(是否重叠和滑动距离有关系) 
++ 一个数据可以属于多个窗口。 
++ 滑动窗口是固定窗口的更广义的一种形式，滚动窗口可以看做是滑动窗口的一种特殊情况（即窗口大小和滑动间隔相等） 
 
 #### 会话窗口(Session Windows)
 
@@ -2910,12 +2913,14 @@ orangeStream
 
 + Flink提供了更加简单的`.timeWindow()`和`.countWindow()`方法，用于定义时间窗口和计数窗口。
 
++ 窗口api的组成:datastream+keyBy+window(窗口分配器)+aggr(窗口聚合函数)
++ 
 ```java
 DataStream<Tuple2<String,Double>> minTempPerWindowStream = 
   datastream
   .map(new MyMapper())
-  .keyBy(data -> data.f0)
-  .timeWindow(Time.seconds(15))
+  .keyBy(data -> data.f0) //必须选按照key分组后,才需要统计相同key下的聚合数据,因此在keyBy生成KeyedStream后,才有window方法
+  .timeWindow(Time.seconds(15)) //默认15s的滚动窗口函数
   .minBy(1);
 ```
 
@@ -2929,15 +2934,20 @@ DataStream<Tuple2<String,Double>> minTempPerWindowStream =
   + 会话窗口（session window）
   + **全局窗口（global window）**
 
++ windowAll方法:  
+  datastream的所有数据都会进入下游的唯一的一个分区中，类似于global操作,既然是windowall，就是将所有数据一起聚合,因此自然不能并行,只有一个下游节点
+
 #### 创建不同类型的窗口
 
 + 滚动时间窗口（tumbling time window）
 
   `.timeWindow(Time.seconds(15))`
+  .window(TumblingProcessingTimeWindows.of(size))
 
 + 滑动时间窗口（sliding time window）
 
   `.timeWindow(Time.seconds(15),Time.seconds(5))`
+  .window(SlidingProcessingTimeWindows.of(size, slide))
 
 + 会话窗口（session window）
 
@@ -2946,10 +2956,12 @@ DataStream<Tuple2<String,Double>> minTempPerWindowStream =
 + 滚动计数窗口（tumbling count window）
 
   `.countWindow(5)`
+  window(GlobalWindows.create()).trigger(PurgingTrigger.of(CountTrigger.of(size)));
 
 + 滑动计数窗口（sliding count window）
 
   `.countWindow(10,2)`
+  window(GlobalWindows.create()).evictor(CountEvictor.of(size)).trigger(CountTrigger.of(slide));
 
 *DataStream的`windowAll()`类似分区的global操作，这个操作是non-parallel的(并行度强行为1)，所有的数据都会被传递到同一个算子operator上，官方建议如果非必要就不要用这个API*
 
@@ -3023,15 +3035,16 @@ DataStream<SensorReading> minTempPerWindowStream = dataStream
 
 ### 6.2.4 window function
 
-window function 定义了要对窗口中收集的数据做的计算操作，主要可以分为两类：
+window function 定义了要对窗口中收集的数据做的计算操作，主要可以分为两类：  
+窗口函数的目的是，针对key分组后的数据，再window分桶，数据都已经进桶了,因此需要对桶内数据进行聚合。
 
-+ 增量聚合函数（incremental aggregation functions）
-+ 全窗口函数（full window functions）
++ 增量聚合函数（incremental aggregation functions）比如min、max、reduce等聚合操作。
++ 全窗口函数（full window functions）相当于批处理,数据来了都不计算,只存储,统一一起计算。比如统计中位数、分位数等
 
 #### 增量聚合函数
 
 + **每条数据到来就进行计算**，保持一个简单的状态。（来一条处理一条，但是不输出，到窗口临界位置才输出）
-+ 典型的增量聚合函数有ReduceFunction, AggregateFunction。
++ 典型的增量聚合函数有ReduceFunction(reduce), AggregateFunction(aggregate)。
 
 #### 全窗口函数
 
@@ -3112,7 +3125,7 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
            //                .window(TumblingProcessingTimeWindows.of(Time.seconds(15)))
            //                .timeWindow(Time.seconds(15)) // 已经不建议使用@Deprecated
            .window(TumblingProcessingTimeWindows.of(Time.seconds(15)))
-           .aggregate(new AggregateFunction<SensorReading, Integer, Integer>() {
+           .aggregate(new AggregateFunction<SensorReading, Integer, Integer>() { //参数流数据、累加器对象(存储中间值)、结果对象类型
      
              // 新建的累加器
              @Override
@@ -3121,6 +3134,7 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
              }
      
              // 每个数据在上次的基础上累加
+             //参数accumulator表示截止到当前的累加器值。即是在累加器基础上+1
              @Override
              public Integer add(SensorReading value, Integer accumulator) {
                return accumulator + 1;
@@ -3185,7 +3199,8 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
 
 2. 测试滚动时间窗口的**全窗口函数**
 
-   全窗口函数，特点即数据过来先不处理，等到窗口临界再遍历、计算、输出结果。
+   全窗口函数:可以获取更多的信息，包括分组key的信息、window窗口的信息等。  
+   全窗口函数，特点即数据过来先不处理，等到窗口临界再遍历、计算、输出结果。  
 
    + 编写java测试代码
 
@@ -3231,17 +3246,27 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
                  return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
              });
      
-             // 2. 全窗口函数 （WindowFunction和ProcessWindowFunction，后者更全面）
-             SingleOutputStreamOperator<Tuple3<String, Long, Integer>> resultStream2 = dataStream.keyBy(SensorReading::getId)
+             // 2. 全窗口函数 （WindowFunction和ProcessWindowFunction，后者更全面）-- 全窗口函数:可以获取更多的信息，包括分组key的信息、window窗口的信息等。
+             // 按照key分组,返回Tuple对象作为key,只是目前tuple中只有id这一个数据
+             SingleOutputStreamOperator<Tuple3<String, Long, Integer>> resultStream2 = dataStream.keyBy(SensorReading::getId) //此时返回的是String作为key.如果是传入的id,则返回的是Tuple
                      .window(TumblingProcessingTimeWindows.of(Time.seconds(15)))
+                     //全局函数ProcessWindowFunction泛型参数<输入数据类型、输出数据类型、分组key对象、窗口对象>
+                    //Tuple3<String, Long, Integer> 输出key、key所在窗口的endTime时间戳、key在该窗口出现的次数
+                    //.process(new ProcessWindowFunction<SensorReading, Tuple3<String, Long, Integer>, Tuple, TimeWindow>() 
+                    //其中 ProcessWindowFunction的process方法,参数process(KEY key, Context context, Iterable<IN> elements, Collector<OUT> out)  
+                    //包含context,该对象可以获取window窗口对象,同时还有其他对象。
+                    //因此是更高级的方法。
      //                .process(new ProcessWindowFunction<SensorReading, Object, Tuple, TimeWindow>() {
      //                })
+                     //全局函数WindowFunction泛型参数<输入数据类型、输出数据类型、分组key对象、窗口对象>
+                     //Tuple3<String, Long, Integer> 输出key、key所在窗口的endTime时间戳、key在该窗口出现的次数
                      .apply(new WindowFunction<SensorReading, Tuple3<String, Long, Integer>, String, TimeWindow>() {
                          @Override
-                         public void apply(String s, TimeWindow window, Iterable<SensorReading> input, Collector<Tuple3<String, Long, Integer>> out) throws Exception {
+                         public void apply(String s, TimeWindow window, Iterable<SensorReading> input, Collector<Tuple3<String, Long, Integer>> out) 
+                                     throws Exception {
                              String id = s;
-                             long windowEnd = window.getEnd();
-                             int count = IteratorUtils.toList(input.iterator()).size();
+                             long windowEnd = window.getEnd();//窗口的结束时间
+                             int count = IteratorUtils.toList(input.iterator()).size();//计算key在该时间窗口内出现的次数
                              out.collect(new Tuple3<>(id, windowEnd, count));
                          }
                      });
@@ -3252,7 +3277,7 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
          }
      }
      ```
-
+  
    + 启动本地socket
 
      ```shell
