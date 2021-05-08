@@ -3616,6 +3616,12 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 + **watermark 必须单调递增**，以确保任务的事件时间时钟在向前推进，而不是在后退
 
 + watermark 与数据的时间戳相关
++ watermark机制  
+  +数据来了，直接分配到桶里。
+  +watermark来了,判断是不是要关闭。
+
+  +watermark的延迟时间设置多少合理呢？要打印一下延迟数据，选择相对容忍度下,最大的延迟数据，比如最大延迟3s，那就设置延迟时间为3s最合理。  
+   延迟时间设置为3.因为看到5和2之间只有3s。即大部分都在3s内可以搞定，超过3秒的，只能用window去搞定。
 
 ### 7.3.3 Watermark的传递
 
