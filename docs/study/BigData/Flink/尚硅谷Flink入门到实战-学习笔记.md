@@ -3598,10 +3598,10 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 ​	**只要没有达到水位那么不管现实中的时间推进了多久都不会触发关窗。**
 
-+ 总结--Watermark生产逻辑:
- + 当Flink接收到数据时，会按照一定的规则去生成Watermark，生成规则是基于目前最大的事件时间-延迟时长即可。
-   比如当前事件时间是7，当接收完该数据后,会生产Watermark=7-2=5的数据。
-   因此可以看到图汇总事件7后跟着Watermark=5
++ 总结 --Watermark生产逻辑:  
+ + 当Flink接收到数据时，会按照一定的规则去生成Watermark，生成规则是基于目前最大的事件时间-延迟时长即可。  
+   比如当前事件时间是7，当接收完该数据后,会生产Watermark=7-2=5的数据。  
+   因此可以看到图汇总事件7后跟着Watermark=5  
  + 一旦Watermark比当前未触发的窗口的停止时间要晚，那么就会触发相应窗口的执行。
  + 由于event time是由数据携带的，因此，如果运行过程中无法获取新的数据，那么没有被触发的窗口将永远都不被触发。
 
