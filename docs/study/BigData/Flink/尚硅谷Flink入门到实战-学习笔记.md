@@ -3625,6 +3625,14 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 ### 7.3.3 Watermark的传递
 
++ watermark如何向下游传递 
+因为数据流会重新分区,那么watermark如何在重新分区中进行传递呢？  
+答案分三方面:  
+  + 一个节点向下N个分区节点,如何传递？ watermark会广播到所有的下游，通知所有下游，我已经确保N秒前的数据都到达了，下游可以关闭了。
+  + 一个节点会接受来自N个上游节点的watermark数据,此时该如何选择呢？选择最小的,因为最小的才能确保数据是最有效的。 
+    比如上游2个节点，分别传递的watermark是3和7，传递7的节点肯定已经反映说3这个时间点已经完成了，所以继续广播到下游的是3这个watermark。
+  + 基于广播到下游是有成本的，因此如果watermark一直不变，则不需要继续发送到下游广播相同的watermark。
+
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200526204125805.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
 1. 图一，当前Task有四个上游Task给自己传输WaterMark信息，通过比较，只取当前最小值作为自己的本地Event-time clock，上图中，当前Task[0,2)的桶就可关闭了，因为所有上游中2s最小，能保证2s的WaterMark是准确的（所有上游Watermark都已经>=2s)。这时候将Watermark=2广播到当前Task的下游。
