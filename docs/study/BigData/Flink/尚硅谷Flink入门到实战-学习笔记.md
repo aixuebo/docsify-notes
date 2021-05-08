@@ -3665,9 +3665,9 @@ DataStream<SensorReading> dataStream = env.addSource(new SensorSource()) .assign
 
 MyAssigner有两种类型
 
-+ AssignerWithPeriodicWatermarks
++ AssignerWithPeriodicWatermarks  周期性的生产Watermark。依赖最大的时间戳
 
-+ AssignerWithPunctuatedWatermarks
++ AssignerWithPunctuatedWatermarks 可以每条数据都生产一个Watermark。依赖上一条数据内容+本条数据的时间戳生产Watermark
 
 以上两个接口都继承自TimestampAssigner。
 
@@ -3687,8 +3687,8 @@ MyAssigner有两种类型
 
 ### 7.3.5 Watermark的设定
 
-+ 在Flink中，Watermark由应用程序开发人员生成，这通常需要对相应的领域有一定的了解
-+ 如果Watermark设置的延迟太久，收到结果的速度可能就会很慢，解决办法是在水位线到达之前输出一个近似结果
++ 在Flink中，Watermark由应用程序开发人员生成，这通常需要对相应的领域有一定的了解。可以做一个统计,看看延迟数据的分布,获取正态分布后,觉得延迟时间。与生产环境有关系的。
++ 如果Watermark设置的延迟太久，收到结果的速度可能就会很慢，解决办法是在水位线到达之前输出一个近似结果。
 + 如果Watermark到达得太早，则可能收到错误结果，不过Flink处理迟到数据的机制可以解决这个问题
 
 ​	*一般大数据场景都是考虑高并发情况，所以一般使用周期性生成Watermark的方式，避免频繁地生成Watermark。*
