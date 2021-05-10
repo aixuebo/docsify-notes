@@ -3933,9 +3933,9 @@ minTemp:3> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
 >
 > [Flink状态管理详解：Keyed State和Operator List State深度解析](https://zhuanlan.zhihu.com/p/104171679)	<=	不错的文章，建议阅读
 
-+ 算子状态（Operator State）
-+ 键控状态（Keyed State）
-+ 状态后端（State Backends）
++ 算子状态（Operator State）--- flink内部存储状态,整个算子所有数据公用同一个状态。很少用,经常用的是Keyed State
++ 键控状态（Keyed State）--- flink 内部关于keyStream的状态存储,即每一个key单独存储一个状态
++ 状态后端（State Backends）--- 用于管理状态,状态放在哪里,如何获取?，比如Rocks、内存等等其他存储
 
 ## 8.1 状态概述
 
@@ -3947,7 +3947,7 @@ minTemp:3> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
 
 ---
 
-- **在Flink中，状态始终与特定算子相关联**
+- **在Flink中，状态始终与特定算子相关联**  ---比如先reduce,在map,如果此时map操作,不可能访问到reduce中的状态。
 - 为了使运行时的Flink了解算子的状态，算子需要预先注册其状态
 
 **总的来说，有两种类型的状态：**
@@ -3976,7 +3976,8 @@ minTemp:3> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
   + 也将状态表示未数据的列表。它与常规列表状态的区别在于，在发生故障时，或者从保存点(savepoint)启动应用程序时如何恢复
 
 + 广播状态(Broadcast state)
-  + 如果一个算子有多项任务，而它的每项任务状态又都相同，那么这种特殊情况最适合应用广播状态
+  + 如果一个算子有多项任务，而它的每项任务状态又都相同，那么这种特殊情况最适合应用广播状态。  
+    所有的算子中的状态都同步，比如配置文件要同步到所有的节点。
 
 ### 测试代码
 
@@ -4023,9 +4024,9 @@ public class StateTest1_OperatorState {
   }
 
   // 自定义MapFunction
-  public static class MyCountMapper implements MapFunction<SensorReading, Integer>, ListCheckpointed<Integer> {
+  public static class MyCountMapper implements MapFunction<SensorReading, Integer>, ListCheckpointed<Integer> {//当前保存的状态是Integer
     // 定义一个本地变量，作为算子状态
-    private Integer count = 0;
+    private Integer count = 0; //**故障发生的时候如何存储还原？**
 
     @Override
     public Integer map(SensorReading value) throws Exception {
@@ -4033,6 +4034,7 @@ public class StateTest1_OperatorState {
       return count;
     }
 
+    //保存当前的快照,保存到List中
     @Override
     public List<Integer> snapshotState(long checkpointId, long timestamp) throws Exception {
       return Collections.singletonList(count);
@@ -4068,7 +4070,7 @@ sensor_1,1547718199,35.8
 5
 ```
 
-## 8.3 键控状态 Keyed State
+## 8.3 键控状态 Keyed State  --- 每一个key保存一个状态
 
 > [Flink_Flink中的状态](https://blog.csdn.net/dongkang123456/article/details/108430338)
 
@@ -4080,16 +4082,16 @@ sensor_1,1547718199,35.8
 
 + **当任务处理一条数据时，他会自动将状态的访问范围限定为当前数据的key**。
 
-### 键控状态数据结构
+### 键控状态数据结构 -- 具体参见下面的demo
 
 + 值状态(value state)
-  + 将状态表示为单个的值
+  + 将状态表示为单个的值 --- 一个key保存成一个值
 
 + 列表状态(List state)
-  + 将状态表示为一组数据的列表
+  + 将状态表示为一组数据的列表 -- 一个key保存成一个List
 
 + 映射状态(Map state)
-  + 将状态表示为一组key-value对
+  + 将状态表示为一组key-value对 -- 一个key保存成一个Map
 
 + **聚合状态(Reducing state & Aggregating State)**
   + 将状态表示为一个用于聚合操作的列表
@@ -4098,7 +4100,8 @@ sensor_1,1547718199,35.8
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200906183806458.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
 
-*注：声明一个键控状态，一般在算子的open()中声明，因为运行时才能获取上下文信息*
+*注：声明一个键控状态，一般在算子的open()中声明，因为运行时才能获取上下文信息* 通过上下文获取到当前操作的key是什么，从而获取到对应的状态值。因此要使用rich接口。  
+因为每一个key 都有一个状态，因此不能设置private 私有变量。
 
 + java测试代码
 
@@ -4142,54 +4145,60 @@ sensor_1,1547718199,35.8
     }
   
     // 自定义map富函数，测试 键控状态
-    public static class MyMapper extends RichMapFunction<SensorReading,Integer>{
+    public static class MyMapper extends RichMapFunction<SensorReading,Integer>{ //RichMapFunction富接口才能有上下文环境
   
       //        Exception in thread "main" java.lang.IllegalStateException: The runtime context has not been initialized.
+      //        定义成员变量会报错,必须定义在open中,因为定义在成员变量里,此时创建该变量的时候，还无法拿到getRuntimeContext,因此会报错,所以只能在open中定义变量实例。
       //        ValueState<Integer> valueState = getRuntimeContext().getState(new ValueStateDescriptor<Integer>("my-int", Integer.class));
   
-      private ValueState<Integer> valueState;
+      private ValueState<Integer> valueState; // 定义一个具体的值对象。 定义一个变量名称与类型
   
   
       // 其它类型状态的声明
-      private ListState<String> myListState;
-      private MapState<String, Double> myMapState;
-      private ReducingState<SensorReading> myReducingState;
+      private ListState<String> myListState;//定义一个list对象
+      private MapState<String, Double> myMapState;//定义一个map对象
+      private ReducingState<SensorReading> myReducingState;//定义一个聚合对象
   
       @Override
       public void open(Configuration parameters) throws Exception {
-        valueState = getRuntimeContext().getState(new ValueStateDescriptor<Integer>("my-int", Integer.class));
+        valueState = getRuntimeContext().getState(new ValueStateDescriptor<Integer>("my-int", Integer.class)); //定义变量名称与类型
   
         myListState = getRuntimeContext().getListState(new ListStateDescriptor<String>("my-list", String.class));
         myMapState = getRuntimeContext().getMapState(new MapStateDescriptor<String, Double>("my-map", String.class, Double.class));
-        //            myReducingState = getRuntimeContext().getReducingState(new ReducingStateDescriptor<SensorReading>())
+        //注意 要生命一个reduce函数,当reduce.add元素的时候,会调用该函数做merge操作
+        myReducingState = getRuntimeContext().getReducingState(new ReducingStateDescriptor<SensorReading>("my-reduce", ReduceFunction<T> reduceFunction, SensorReading.class))
   
       }
   
       // 这里就简单的统计每个 传感器的 信息数量
       @Override
       public Integer map(SensorReading value) throws Exception {
+      
+        //基础操作
+        Integer count = valueState.value();//获取当前状态值
+        // 第一次获取是null，需要判断
+        count = count==null?0:count;
+        ++count; //状态值+1
+        valueState.update(count); //更新状态值
+        return count;//返回最新的状态值
+        
+        
         // 其它状态API调用
-        // list state
+        // list state 获取list中的元素
         for(String str: myListState.get()){
           System.out.println(str);
         }
-        myListState.add("hello");
-        // map state
+        myListState.add("hello");//向list追加元素
+        
+        // map state 获取map元素
         myMapState.get("1");
-        myMapState.put("2", 12.3);
+        myMapState.put("2", 12.3);//添加元素
         myMapState.remove("2");
-        // reducing state
-        //            myReducingState.add(value);
-  
         myMapState.clear();
+        
+        //reducing state
+        //myReducingState.add(value);//向聚合函数中追加一个新的元素,那么myReducingState会调用merge方法。
   
-  
-        Integer count = valueState.value();
-        // 第一次获取是null，需要判断
-        count = count==null?0:count;
-        ++count;
-        valueState.update(count);
-        return count;
       }
     }
   }
@@ -4197,7 +4206,8 @@ sensor_1,1547718199,35.8
 
 ### 场景测试
 
-假设做一个温度报警，如果一个传感器前后温差超过10度就报警。这里使用键控状态Keyed State + flatMap来实现
+假设做一个温度报警，如果一个传感器前后温差超过10度就报警。这里使用键控状态Keyed State + flatMap来实现  
+flatMap的原因是 温度报警可以输出1个报警、多个报警、或者不输出报警(无报警)。如果使用map还得需要filter过滤误无报警的数据，更麻烦
 
 + java代码
 
@@ -4318,7 +4328,7 @@ sensor_1,1547718199,35.8
     (sensor_7,19.9,30.0)
     ```
 
-## 8.4 状态后端 State Backends
+## 8.4 状态后端 State Backends --- 用于管理状态,状态放在哪里,如何获取?，比如Rocks、内存等等其他存储
 
 > [Flink_Flink中的状态](https://blog.csdn.net/dongkang123456/article/details/108430338)
 
@@ -4330,20 +4340,21 @@ sensor_1,1547718199,35.8
 
 + 状态的存储、访问以及维护，由一个可插入的组件决定，这个组件就叫做**状态后端( state backend)**
 
-+ **状态后端主要负责两件事：本地状态管理，以及将检查点(checkPoint)状态写入远程存储**
++ **状态后端主要负责两件事：本地状态管理、以及容错处理、序列化与反序列化、持久化处理、将检查点(checkPoint)状态写入远程存储**
 
 ### 8.4.2 选择一个状态后端
 
-+ MemoryStateBackend
++ MemoryStateBackend  env.setStateBackend(new MemoryStateBackend());
   + 内存级的状态后端，会将键控状态作为内存中的对象进行管理，将它们存储在TaskManager的JVM堆上，而将checkpoint存储在JobManager的内存中
   + 特点：快速、低延迟，但不稳定
-+ FsStateBackend（默认）
++ FsStateBackend（默认） env.setStateBackend(new FsStateBackend("checkpointDataUri")); 
   + 将checkpoint存到远程的持久化文件系统（FileSystem）上，而对于本地状态，跟MemoryStateBackend一样，也会存在TaskManager的JVM堆上
   + 同时拥有内存级的本地访问速度，和更好的容错保证
-+ RocksDBStateBackend
++ RocksDBStateBackend  env.setStateBackend(new RocksDBStateBackend("checkpointDataUri"));
   + 将所有状态序列化后，存入本地的RocksDB中存储
-
-### 8.4.3 配置文件
+          
+### 8.4.3 配置文件 
+配置整个集群的默认状态管理器 -- filesystem
 
 `flink-conf.yaml`
 
@@ -4355,11 +4366,11 @@ sensor_1,1547718199,35.8
 # The backend that will be used to store operator state checkpoints if
 # checkpointing is enabled.
 #
-# Supported backends are 'jobmanager', 'filesystem', 'rocksdb', or the
+# Supported backends are 'jobmanager', 'filesystem', 'rocksdb', or the ### jobmanager是基于内存的,checkpoint的内容会存储在jobmanager上。
 # <class-name-of-factory>.
 #
-# state.backend: filesystem
-上面这个就是默认的checkpoint存在filesystem
+# state.backend: filesystem  ### 上面这个就是默认的checkpoint存在filesystem
+
 
 
 # Directory for checkpoints filesystem, when using any of the default bundled
@@ -4374,15 +4385,14 @@ sensor_1,1547718199,35.8
 # Flag to enable/disable incremental checkpoints for backends that
 # support incremental checkpoints (like the RocksDB state backend). 
 #
-# state.backend.incremental: false
+# state.backend.incremental: false 增量化的保存,比如rocksdb是支持增量的,但filesystem是不支持增量的
 
 # The failover strategy, i.e., how the job computation recovers from task failures.
 # Only restart tasks that may have been affected by the task failure, which typically includes
 # downstream tasks and potentially upstream tasks if their produced data is no longer available for consumption.
 
-jobmanager.execution.failover-strategy: region
+jobmanager.execution.failover-strategy: region 上面这个region指，多个并行度的任务要是有个挂掉了，只重启那个任务所属的region（可能含有多个子任务）, 而不需要重启整个Flink程序
 
-上面这个region指，多个并行度的任务要是有个挂掉了，只重启那个任务所属的region（可能含有多个子任务），而不需要重启整个Flink程序
 ```
 
 ### 8.4.4 样例代码
