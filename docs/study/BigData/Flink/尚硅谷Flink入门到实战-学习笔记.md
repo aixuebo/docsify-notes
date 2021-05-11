@@ -4457,17 +4457,19 @@ jobmanager.execution.failover-strategy: region 上面这个region指，多个并
 
 ​	我们之前学习的**转换算子**是无法访问事件的<u>时间戳信息和水位线信息</u>的。而这在一些应用场景下，极为重要。例如MapFunction这样的map转换算子就无法访问时间戳或者当前事件的事件时间。
 
-​	基于此，DataStream API提供了一系列的Low-Level转换算子。可以**访问时间戳**、**watermark**以及**注册定时事件**。还可以输出**特定的一些事件**，例如超时事件等。<u>Process Function用来构建事件驱动的应用以及实现自定义的业务逻辑(使用之前的window函数和转换算子无法实现)。例如，FlinkSQL就是使用Process Function实现的</u>。
+​	基于此，DataStream API提供了一系列的Low-Level转换算子。可以**访问时间戳**、**watermark**以及**注册定时事件**。还可以输出**特定的一些事件**，例如超时事件等。<u>Process Function用来构建事件驱动的应用以及实现自定义的业务逻辑(使用之前的window函数和转换算子无法实现)。例如，FlinkSQL就是使用Process Function实现的</u>。  
+
+**datastream的调用方法,SingleOutputStreamOperator<R> process(ProcessFunction<T, R> processFunction)**
 
 Flink提供了8个Process Function：
 
 - ProcessFunction
-- KeyedProcessFunction
-- CoProcessFunction
-- ProcessJoinFunction
-- BroadcastProcessFunction
+- KeyedProcessFunction -- 先keyBy分组后,再近些底层处理,因此比ProcessFunction多一个获取key的能力
+- CoProcessFunction -- 一个函数,处理两条不同的流,产生相同的输出 CoProcessFunction<IN1, IN2, OUT>
+- ProcessJoinFunction -- 针对join的结果,处理left、right两条数据,转换成一个输出 ProcessJoinFunction<IN1, IN2, OUT>
+- BroadcastProcessFunction -- 引用在BroadcastStream上
 - KeyedBroadcastProcessFunction
-- ProcessWindowFunction
+- ProcessWindowFunction -- 针对一个key在一个window内的所有数据进行处理,产生输出Collector;ProcessWindowFunction<IN, OUT, KEY, W extends Window>
 - ProcessAllWindowFunction
 
 ## 9.1 KeyedProcessFunction
@@ -4477,7 +4479,8 @@ Flink提供了8个Process Function：
 ​	KeyedProcessFunction用来操作KeyedStream。KeyedProcessFunction会处理流的每一个元素，输出为0个、1个或者多个元素。所有的Process Function都继承自RichFunction接口，所以都有`open()`、`close()`和`getRuntimeContext()`等方法。而`KeyedProcessFunction<K, I, O>`还额外提供了两个方法:
 
 + `processElement(I value, Context ctx, Collector<O> out)`，流中的每一个元素都会调用这个方法，调用结果将会放在Collector数据类型中输出。Context可以访问元素的时间戳，元素的 key ，以及TimerService 时间服务。 Context 还可以将结果输出到别的流(side outputs)。
-+ `onTimer(long timestamp, OnTimerContext ctx, Collector<O> out)`，是一个回调函数。当之前注册的定时器触发时调用。参数timestamp 为定时器所设定的触发的时间戳。Collector 为输出结果的集合。OnTimerContext和processElement的Context 参数一样，提供了上下文的一些信息，例如定时器触发的时间信息(事件时间或者处理时间)。
++ `onTimer(long timestamp, OnTimerContext ctx, Collector<O> out)`，是一个回调函数。当之前注册的定时器触发时调用。参数timestamp 为定时器所设定的触发的时间戳。Collector 为输出结果的集合。OnTimerContext和processElement的Context 参数一样，提供了上下文的一些信息，例如定时器触发的时间信息(事件时间或者处理时间)。  
+  在定时器触发的时候执行。当闹钟响的时候要做什么？该方法来实现。因此前期需要注册一个闹钟。
 
 ### 测试代码
 
@@ -4523,8 +4526,9 @@ public class ProcessTest1_KeyedProcessFunction {
   }
 
   // 实现自定义的处理函数
+  //泛型 key类型、输入类型、输出类型
   public static class MyProcess extends KeyedProcessFunction<Tuple, SensorReading, Integer> {
-    ValueState<Long> tsTimerState;
+    ValueState<Long> tsTimerState;//用于保存定时器的时间戳,主要用于清空定时器时使用
 
     @Override
     public void open(Configuration parameters) throws Exception {
@@ -4537,25 +4541,26 @@ public class ProcessTest1_KeyedProcessFunction {
 
       // context
       // Timestamp of the element currently being processed or timestamp of a firing timer.
-      ctx.timestamp();
+      ctx.timestamp();//获取当前的时间戳
       // Get key of the element being processed.
-      ctx.getCurrentKey();
-      //            ctx.output();
-      ctx.timerService().currentProcessingTime();
-      ctx.timerService().currentWatermark();
+      ctx.getCurrentKey();//当前的key
+      // ctx.output(OutputTag<X> outputTag, X value);//用于分流,对流数据进行标记
+      
+      ctx.timerService().currentProcessingTime();//获取当前处理时间
+      ctx.timerService().currentWatermark();//获取watermark
       // 在5处理时间的5秒延迟后触发
-      ctx.timerService().registerProcessingTimeTimer( ctx.timerService().currentProcessingTime() + 5000L);
+      ctx.timerService().registerProcessingTimeTimer( ctx.timerService().currentProcessingTime() + 5000L);//注册一个定时器,是以处理时间为基础,即5s后触发
       tsTimerState.update(ctx.timerService().currentProcessingTime() + 1000L);
-      //            ctx.timerService().registerEventTimeTimer((value.getTimestamp() + 10) * 1000L);
+      //  ctx.timerService().registerEventTimeTimer((value.getTimestamp() + 10) * 1000L);
       // 删除指定时间触发的定时器
-      //            ctx.timerService().deleteProcessingTimeTimer(tsTimerState.value());
+      //  ctx.timerService().deleteProcessingTimeTimer(tsTimerState.value());
     }
 
     @Override
     public void onTimer(long timestamp, OnTimerContext ctx, Collector<Integer> out) throws Exception {
       System.out.println(timestamp + " 定时器触发");
       ctx.getCurrentKey();
-      //            ctx.output();
+      // ctx.output(OutputTag<X> outputTag, X value);//用于分流,对流数据进行标记
       ctx.timeDomain();
     }
 
@@ -4689,11 +4694,11 @@ sensor_1,1547718207,36.3
         // 如果 当前温度 > 上次温度 并且 没有设置报警计时器，则设置
         if (curTemp > lastTemp && null == timerTimestamp) {
           long warningTimestamp = ctx.timerService().currentProcessingTime() + interval;
-          ctx.timerService().registerProcessingTimeTimer(warningTimestamp);
-          recentTimerTimeStamp.update(warningTimestamp);
+          ctx.timerService().registerProcessingTimeTimer(warningTimestamp);//设置定时器
+          recentTimerTimeStamp.update(warningTimestamp);//更新定时器闹钟
         }
         // 如果 当前温度 < 上次温度，且 设置了报警计时器，则清空计时器
-        else if (curTemp <= lastTemp && timerTimestamp != null) {
+        else if (curTemp <= lastTemp && timerTimestamp != null) {//发现温度不是连续上升的,因此删除该定时器
           ctx.timerService().deleteProcessingTimeTimer(timerTimestamp);
           recentTimerTimeStamp.clear();
         }
@@ -4702,11 +4707,12 @@ sensor_1,1547718207,36.3
       }
   
       // 定时器任务
+      //能触发报警,说明interval内,所有的温度都是上升的,没有触发过deleteProcessingTimeTimer操作。因此直接报警
       @Override
       public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
         // 触发报警，并且清除 定时器状态值
         out.collect("传感器" + ctx.getCurrentKey() + "温度值连续" + interval + "ms上升");
-        recentTimerTimeStamp.clear();
+        recentTimerTimeStamp.clear();//定时器已经触发,因此删除定时器的临时变量,否则上面的逻辑在比较的时候,会有问题。
       }
     }
   }
@@ -4799,11 +4805,12 @@ sensor_1,1547718207,36.3
   
       // 测试ProcessFunction，自定义侧输出流实现分流操作
       SingleOutputStreamOperator<SensorReading> highTempStream = dataStream.process(new ProcessFunction<SensorReading, SensorReading>() {
+        //out就是主流,不输出到out,就相当于被丢弃到其他流中
         @Override
         public void processElement(SensorReading value, Context ctx, Collector<SensorReading> out) throws Exception {
           // 判断温度，大于30度，高温流输出到主流；小于低温流输出到侧输出流
           if (value.getTemperature() > 30) {
-            out.collect(value);
+            out.collect(value);//输出主流
           } else {
             ctx.output(lowTempTag, value);
           }
@@ -4838,7 +4845,7 @@ sensor_1,1547718207,36.3
     high-temp> SensorReading{id='sensor_10', timestamp=1547718205, temperature=38.1}
     ```
 
-## 9.4 CoProcessFunction
+## 9.4 CoProcessFunction -- 一个函数,处理两条不同的流,产生相同的输出 CoProcessFunction<IN1, IN2, OUT>
 
 + 对于两条输入流，DataStream API 提供了CoProcessFunction 这样的low-level操作。CoProcessFunction 提供了操作每一个输入流的方法: `processElement1()`和`processElement2()`。
 
@@ -4855,7 +4862,8 @@ sensor_1,1547718207,36.3
 
 + Flink 故障恢复机制的核心，就是应用状态的一致性检查点
 
-+ 有状态流应用的一致检查点，其实就是**所有任务的状态**，在某个时间点的一份拷贝（一份快照）；**这个时间点，应该是所有任务都恰好处理完一个相同的输入数据的时候**
++ 有状态流应用的一致检查点，其实就是**所有任务的状态**，在某个时间点的一份拷贝（一份快照）；**这个时间点，应该是所有任务都恰好处理完一个相同的输入数据的时候,即时间点不是一个具体的时间点,而是当前某个数据全部都处理完的时间点**
++ 上图中，保存5 6 9，说明5这个数据已经处理完了，保存2个流当5处理完后的数据。即重启恢复的时候，直接读取5之后的数据就可以。
 
   *(5这个数据虽然进了奇数流但是偶数流也应该做快照，因为属于同一个相同数据，只是没有被他处理)*
 
@@ -4871,7 +4879,7 @@ sensor_1,1547718207,36.3
 
 + 如果发生故障， Flink 将会使用最近的检查点来一致恢复应用程序的状态，并重新启动处理流程
 
-  （**如图中所示，7这个数据被source读到了，准备传给奇数流时，奇数流宕机了，数据传输发生中断**）
+  （**如图中所示，7这个数据被source读到了，准备传给奇数流时，奇数流宕机了，数据传输发生中断，注意6已经被消费了,所以偶数流的结果是12**）
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200529220452315.png)
 
@@ -4881,7 +4889,7 @@ sensor_1,1547718207,36.3
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200529220546658.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
-+ 第二步是从 checkpoint 中读取状态，将状态重置
++ 第二步是从 checkpoint 中读取状态，将状态重置,读取 5 6 9 三个值
 
   *(**读取在远程仓库**(Storage，这里的仓库指状态后端保存数据指定的三种方式之一)**保存的状态**)*
 
@@ -4889,7 +4897,7 @@ sensor_1,1547718207,36.3
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200529220850257.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
-+ 第三步：开始消费并处理检查点到发生故障之间的所有数据
++ 第三步：开始消费并处理检查点到发生故障之间的所有数据,source从5后开始继续重新读取6 7 数据
 
 + **这种检查点的保存和恢复机制可以为应用程序状态提供“精确一次”（exactly-once）的一致性，因为所有算子都会保存检查点并恢复其所有状态，这样一来所有的输入流就都会被重置到检查点完成时的位置**
 
@@ -4900,6 +4908,7 @@ sensor_1,1547718207,36.3
 ### 概述
 
 **checkpoint和Watermark一样，都会以广播的形式告诉所有下游。**
+spark有stage,因此checkpoint只保存stage结果就可以了，但flink不行,他是一条一条处理的。
 
 ---
 
@@ -4912,6 +4921,8 @@ sensor_1,1547718207,36.3
   + 基于Chandy-Lamport算法的分布式快照
   + 将检查点的保存和数据处理分离开，不暂停整个应用
 
+   相当于全班拍照,暴力的方式是大家都停下，去下楼拍照。现在优化一下，每一个人自己单独拍照，谁准备好了，谁就开始拍，然后整体ps就好了。  
+   即每一个任务在内存做一个副本，然后副本同步到jobManager整合。做副本的原因是任务继续改数据对副本无影响，副本起到了某一个时间点的快照功能。
   （就是每个任务单独拍摄自己的快照到内存，之后再到jobManager整合）
 
 ---
@@ -4919,6 +4930,7 @@ sensor_1,1547718207,36.3
 + 检查点分界线（Checkpoint Barrier）
   + Flink的检查点算法用到了一种称为分界线（barrier）的特殊数据形式，用来把一条流上数据按照不同的检查点分开
   + **分界线之前到来的数据导致的状态更改，都会被包含在当前分界线所属的检查点中；而基于分界线之后的数据导致的所有更改，就会被包含在之后的检查点中**
+  + 即每一个Barrier保存一次数据。我们可以基于Barrier做数据merge整合。barrier与watermark一样,也要向下游传递。
 
 ### 具体讲解
 
