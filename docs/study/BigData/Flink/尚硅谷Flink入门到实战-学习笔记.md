@@ -4936,6 +4936,9 @@ spark有stage,因此checkpoint只保存stage结果就可以了，但flink不行,
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200529224034243.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
+**1.上图中箭头上的数据表示正在途中,比如sink前的箭头只有2,没有1,说明2正在sink的途中,1已经sink完成。**  
+**2.两个partition分区的数据,并发执行,分别根据奇偶性进入不同的分区函数处理,然后结果再sink到存储中**
+
 + 现在是一个有两个输入流的应用程序，用并行的两个 Source 任务来读取
 
 + 两条自然数数据流，蓝色数据流已经输出完`蓝3`了，黄色数据流输出完`黄4`了
