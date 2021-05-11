@@ -4990,14 +4990,17 @@ spark有stage,因此checkpoint只保存stage结果就可以了，但flink不行,
 + **Sink 任务向 JobManager 确认状态保存到 checkpoint 完毕**
 + **当所有任务都确认已成功将状态保存到检查点时，检查点就真正完成了**
 
-## 10.4 保存点(Savepoints)
+## 10.4 保存点(Savepoints) --- 手动检查点保存
 
-**CheckPoint为自动保存，SavePoint为手动保存**
+**CheckPoint为自动保存，SavePoint为手动保存**  
+即可以把当前状态快照显示的导出到一个路径下,后期读取该路径,获取状态,根据状态,在新代码的逻辑内进行处理。
 
 + Flink还提供了可以自定义的镜像保存功能，就是保存点（save points）
 + 原则上，创建保存点使用的算法与检查点完全相同，因此保存点可以认为就是具有一些额外元数据的检查点
 + Flink不会自动创建保存点，因此用户（或者外部调度程序）必须明确地触发创建操作
-+ 保存点是一个强大的功能。除了故障恢复外，保存点可以用于：有计划的手动备份、更新应用程序、版本迁移、暂停和重启程序，等等
++ 保存点是一个强大的功能。除了故障恢复外，保存点可以用于：有计划的手动备份、更新应用程序、版本迁移、暂停和重启程序，等等。  
+
+本来线上有bug,我们修复后重新上线,只需要读取检点的每一个值的状态，根据这个状态重新修复数据即可，不需要重新跑历史数据。同理版本升级，我们只需要根据状态，使用新的api跑数据
 
 ## 10.5 检查点和重启策略配置
 
@@ -5036,21 +5039,29 @@ spark有stage,因此checkpoint只保存stage结果就可以了，但flink不行,
   
       // 高级选项
       env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
-      //Checkpoint的处理超时时间
-      env.getCheckpointConfig().setCheckpointTimeout(60000L);
+      //Checkpoint的处理超时时间 如果很长时间没有保存成功,可能是因为后面的存储出现了问题,因此要设置超时时间
+      env.getCheckpointConfig().setCheckpointTimeout(60000L);//1分钟
+      
       // 最大允许同时处理几个Checkpoint(比如上一个处理到一半，这里又收到一个待处理的Checkpoint事件)
+      //source虽然很快就完成了，但下游很多任务可能会很慢,保存时间很耗时。因此最多允许在1个checkpoint
       env.getCheckpointConfig().setMaxConcurrentCheckpoints(2);
+      
       // 与上面setMaxConcurrentCheckpoints(2) 冲突，这个时间间隔是 当前checkpoint的处理完成时间与接收最新一个checkpoint之间的时间间隔
+      //后一个checkpoint开始 - 前一个checkpoint完成,不能小于该值。。主要用于一段时间处理数据。不能一直在checkpoint操作呀。
       env.getCheckpointConfig().setMinPauseBetweenCheckpoints(100L);
+      
       // 如果同时开启了savepoint且有更新的备份，是否倾向于使用更老的自动备份checkpoint来恢复，默认false
+      // 我更倾向于用当前的checkpoint的检查点来做回复，而不是用savepoint。
       env.getCheckpointConfig().setPreferCheckpointForRecovery(true);
+      
       // 最多能容忍几次checkpoint处理失败（默认0，即checkpoint处理失败，就当作程序执行异常）
+      //checkoutpoint挂了,那程序算挂吗？如果是0,则说明checkoutpoint挂了,程序也挂了
       env.getCheckpointConfig().setTolerableCheckpointFailureNumber(0);
   
-      // 3. 重启策略配置
+      // 3. 重启策略配置 --- 如何重启后从检查点恢复数据
       // 固定延迟重启(最多尝试3次，每次间隔10s)
       env.setRestartStrategy(RestartStrategies.fixedDelayRestart(3, 10000L));
-      // 失败率重启(在10分钟内最多尝试3次，每次至少间隔1分钟)
+      // 失败率重启(在10分钟内最多尝试3次，每次至少间隔1分钟) 在一定的时间内,我允许最多失败多少次
       env.setRestartStrategy(RestartStrategies.failureRateRestart(3, Time.minutes(10), Time.minutes(1)));
   
       // socket文本流
